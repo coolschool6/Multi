@@ -1,193 +1,353 @@
-// ============================================
-// MULTIPLAYER GAME CLIENT
-// This runs in your browser and handles the game logic
-// ============================================
+const socket = io();
 
-// ============================================
-// CONNECTION & ROOM SETUP
-// ============================================
-
-// Create a connection to the server
-const RENDER_SERVER_URL = 'https://multiplayer-shooter-game.onrender.com';
-const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-const socket = isLocalDev ? io() : io(RENDER_SERVER_URL);
-
-// Variables to track game state
-let gameState = {
+const state = {
+    connected: false,
     roomName: '',
+    roomCode: '',
     playerId: '',
-    playerCount: 0,
+    roundsToWin: 3,
+    roundNumber: 0,
     gameStarted: false,
-    myPlayer: null,
-    opponent: null,
-    myBullets: [],
-    opponentBullets: []
+    matchEnded: false,
+    players: [],
+    bullets: [],
+    map: { width: 800, height: 600, obstacles: [] },
+    touchVector: { x: 0, y: 0 },
+    particles: [],
+    overlayTimer: 0,
+    joystickActive: false,
+    joystickCenter: { x: 0, y: 0 },
+    localAim: 0,
+    ready: false
 };
 
-// HTML Elements
+const keys = {};
+let audioContext;
+
 const joinScreen = document.getElementById('joinScreen');
 const gameScreen = document.getElementById('gameScreen');
 const gameOverScreen = document.getElementById('gameOverScreen');
 const roomInput = document.getElementById('roomInput');
+const nameInput = document.getElementById('nameInput');
+const weaponSelect = document.getElementById('weaponSelect');
 const joinBtn = document.getElementById('joinBtn');
+const createRoomBtn = document.getElementById('createRoomBtn');
+const readyBtn = document.getElementById('readyBtn');
+const rematchBtn = document.getElementById('rematchBtn');
+const playAgainBtn = document.getElementById('playAgainBtn');
 const statusDiv = document.getElementById('status');
+const leaderboardList = document.getElementById('leaderboardList');
+const overlayMessage = document.getElementById('overlayMessage');
+
+const yourName = document.getElementById('yourName');
+const yourHealth = document.getElementById('yourHealth');
+const yourRounds = document.getElementById('yourRounds');
+const opponentName = document.getElementById('opponentName');
+const opponentHealth = document.getElementById('opponentHealth');
+const opponentRounds = document.getElementById('opponentRounds');
+const roomLabel = document.getElementById('roomLabel');
+const roundLabel = document.getElementById('roundLabel');
+const weaponLabel = document.getElementById('weaponLabel');
+
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
-const playAgainBtn = document.getElementById('playAgainBtn');
 
-// ============================================
-// BUTTON CLICK HANDLERS
-// ============================================
+const joystickBase = document.getElementById('joystickBase');
+const joystickStick = document.getElementById('joystickStick');
+const fireBtn = document.getElementById('fireBtn');
 
-joinBtn.addEventListener('click', () => {
-    const roomName = roomInput.value.trim();
-    
-    if (!roomName) {
-        statusDiv.textContent = 'Please enter a room name!';
-        statusDiv.style.color = '#ff6b6b';
-        return;
+function getMe() {
+    return state.players.find((p) => p.id === state.playerId) || null;
+}
+
+function getOpponent() {
+    return state.players.find((p) => p.id !== state.playerId) || null;
+}
+
+function setStatus(message, type = 'info') {
+    statusDiv.textContent = message;
+    statusDiv.style.color = type === 'error' ? '#ff667d' : type === 'ok' ? '#49f6b7' : '#ffcc66';
+}
+
+function showOverlay(message, ms = 1200) {
+    overlayMessage.textContent = message;
+    overlayMessage.style.opacity = '1';
+    state.overlayTimer = Date.now() + ms;
+}
+
+function hideOverlayIfExpired() {
+    if (state.overlayTimer && Date.now() > state.overlayTimer) {
+        overlayMessage.style.opacity = '0';
+        state.overlayTimer = 0;
+    }
+}
+
+function playTone(freq, duration, gain = 0.05) {
+    try {
+        if (!audioContext) {
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        const osc = audioContext.createOscillator();
+        const amp = audioContext.createGain();
+        osc.frequency.value = freq;
+        osc.connect(amp);
+        amp.connect(audioContext.destination);
+        amp.gain.value = gain;
+        osc.start();
+        osc.stop(audioContext.currentTime + duration);
+    } catch (_err) {
+        // Audio is optional.
+    }
+}
+
+function spawnHitParticles(x, y) {
+    for (let i = 0; i < 12; i += 1) {
+        const angle = (Math.PI * 2 * i) / 12;
+        state.particles.push({
+            x,
+            y,
+            vx: Math.cos(angle) * (1 + Math.random() * 3),
+            vy: Math.sin(angle) * (1 + Math.random() * 3),
+            life: 24,
+            color: '#ffb86c'
+        });
+    }
+}
+
+function updateParticles() {
+    state.particles = state.particles.filter((p) => {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life -= 1;
+        return p.life > 0;
+    });
+}
+
+function drawParticles() {
+    state.particles.forEach((p) => {
+        ctx.globalAlpha = Math.max(0.1, p.life / 24);
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+        ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+}
+
+function updateHud() {
+    const me = getMe();
+    const opp = getOpponent();
+    yourName.textContent = me ? me.name : '-';
+    yourHealth.textContent = me ? me.health : '-';
+    yourRounds.textContent = me ? me.roundWins : '-';
+    opponentName.textContent = opp ? opp.name : 'Waiting...';
+    opponentHealth.textContent = opp ? opp.health : '-';
+    opponentRounds.textContent = opp ? opp.roundWins : '-';
+    roomLabel.textContent = state.roomCode || '-';
+    roundLabel.textContent = state.roundNumber;
+    weaponLabel.textContent = me ? me.weapon : weaponSelect.value;
+}
+
+function drawObstacles() {
+    ctx.fillStyle = '#2d3658';
+    ctx.strokeStyle = '#4a5a8f';
+    state.map.obstacles.forEach((r) => {
+        ctx.fillRect(r.x, r.y, r.w, r.h);
+        ctx.strokeRect(r.x, r.y, r.w, r.h);
+    });
+}
+
+function drawPlayer(player, me = false) {
+    if (!player) return;
+    ctx.save();
+    ctx.translate(player.x, player.y);
+    ctx.rotate(player.angle || 0);
+    ctx.fillStyle = me ? '#49f6b7' : '#ff667d';
+    ctx.beginPath();
+    ctx.moveTo(16, 0);
+    ctx.lineTo(-10, -10);
+    ctx.lineTo(-4, 0);
+    ctx.lineTo(-10, 10);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+
+    const hp = Math.max(0, player.health) / 5;
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(player.x - 24, player.y - 28, 48, 6);
+    ctx.fillStyle = hp > 0.4 ? '#49f6b7' : '#ff667d';
+    ctx.fillRect(player.x - 24, player.y - 28, 48 * hp, 6);
+
+    ctx.fillStyle = '#eaf2ff';
+    ctx.font = '12px sans-serif';
+    ctx.fillText(player.name || 'Pilot', player.x - 20, player.y - 34);
+}
+
+function drawBullets() {
+    state.bullets.forEach((b) => {
+        const mine = b.ownerId === state.playerId;
+        ctx.fillStyle = mine ? '#5de0ff' : '#ff8da0';
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.radius || 5, 0, Math.PI * 2);
+        ctx.fill();
+    });
+}
+
+function drawArena() {
+    ctx.fillStyle = '#090f23';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.strokeStyle = 'rgba(93, 224, 255, 0.08)';
+    for (let i = 0; i < canvas.width; i += 40) {
+        ctx.beginPath();
+        ctx.moveTo(i, 0);
+        ctx.lineTo(i, canvas.height);
+        ctx.stroke();
+    }
+    for (let i = 0; i < canvas.height; i += 40) {
+        ctx.beginPath();
+        ctx.moveTo(0, i);
+        ctx.lineTo(canvas.width, i);
+        ctx.stroke();
     }
 
-    gameState.roomName = roomName;
-    statusDiv.textContent = 'Connecting to room...';
-    statusDiv.style.color = '#ffff00';
-    
-    // Tell the server we want to join this room
-    socket.emit('joinRoom', roomName);
-});
+    drawObstacles();
+    drawBullets();
+    drawPlayer(getOpponent(), false);
+    drawPlayer(getMe(), true);
+    drawParticles();
+}
 
-playAgainBtn.addEventListener('click', () => {
-    // Reset and go back to join screen
-    location.reload();
-});
+function isBlocked(x, y, radius) {
+    return state.map.obstacles.some((r) => {
+        const cx = Math.max(r.x, Math.min(x, r.x + r.w));
+        const cy = Math.max(r.y, Math.min(y, r.y + r.h));
+        const dx = x - cx;
+        const dy = y - cy;
+        return dx * dx + dy * dy <= radius * radius;
+    });
+}
 
-// ============================================
-// SOCKET EVENTS (Messages from the server)
-// ============================================
+function desiredMovement() {
+    let dx = 0;
+    let dy = 0;
+    if (keys.ArrowUp || keys.w || keys.W) dy -= 1;
+    if (keys.ArrowDown || keys.s || keys.S) dy += 1;
+    if (keys.ArrowLeft || keys.a || keys.A) dx -= 1;
+    if (keys.ArrowRight || keys.d || keys.D) dx += 1;
 
-// When we successfully get our player ID
-socket.on('connect', () => {
-    gameState.playerId = socket.id;
-    console.log('Connected to server with ID:', gameState.playerId);
-});
+    dx += state.touchVector.x;
+    dy += state.touchVector.y;
 
-// When we get the list of players in our room
-socket.on('playerList', (players) => {
-    gameState.playerCount = players.length;
-    statusDiv.textContent = `Waiting for opponent... (${gameState.playerCount}/2)`;
-    console.log('Players in room:', players);
-});
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    return { dx: dx / len, dy: dy / len, active: Math.abs(dx) + Math.abs(dy) > 0.01 };
+}
 
-// When the game officially starts (2 players present)
-socket.on('gameStart', () => {
-    console.log('Game started!');
-    gameState.gameStarted = true;
-    
-    // Hide join screen, show game screen
-    joinScreen.classList.remove('active');
-    gameScreen.classList.add('active');
-    
-    // Initialize players
-    gameState.myPlayer = {
-        id: gameState.playerId,
-        x: 100,
-        y: 300,
-        angle: 0,
-        velocityX: 0,
-        velocityY: 0,
-        radius: 15,
-        health: 5,
-        speed: 5
-    };
+function sendMovement() {
+    if (!state.gameStarted || state.matchEnded) return;
+    const me = getMe();
+    if (!me) return;
 
-    gameState.opponent = {
-        id: '',
-        x: 700,
-        y: 300,
-        angle: 0,
-        radius: 15,
-        health: 5
-    };
+    const move = desiredMovement();
+    const speed = 4.8;
 
-    // Start the game loop
-    gameLoop();
-});
+    let x = me.x;
+    let y = me.y;
 
-// When opponent moves
-socket.on('opponentMove', (data) => {
-    if (gameState.opponent) {
-        gameState.opponent.x = data.x;
-        gameState.opponent.y = data.y;
-        gameState.opponent.angle = data.angle;
+    if (move.active) {
+        x = Math.max(15, Math.min(state.map.width - 15, me.x + move.dx * speed));
+        y = Math.max(15, Math.min(state.map.height - 15, me.y + move.dy * speed));
+        if (isBlocked(x, y, 15)) {
+            x = me.x;
+            y = me.y;
+        }
+        state.localAim = Math.atan2(move.dy, move.dx);
     }
-});
 
-// When opponent shoots
-socket.on('opponentBullet', (data) => {
-    gameState.opponentBullets.push({
-        x: data.bullet.x,
-        y: data.bullet.y,
-        velocityX: data.bullet.velocityX,
-        velocityY: data.bullet.velocityY,
-        radius: 5,
-        shooterId: data.id
+    socket.emit('playerMove', { x, y, angle: state.localAim || me.angle || 0 });
+}
+
+function shoot() {
+    if (!state.gameStarted || state.matchEnded) return;
+    const me = getMe();
+    if (!me) return;
+    socket.emit('shoot', { angle: state.localAim || me.angle || 0 });
+    playTone(440, 0.04, 0.03);
+}
+
+function loop() {
+    sendMovement();
+    updateParticles();
+    drawArena();
+    hideOverlayIfExpired();
+    requestAnimationFrame(loop);
+}
+
+function syncPlayers(players) {
+    state.players = players || [];
+    updateHud();
+}
+
+function applyMap(map) {
+    if (!map) return;
+    state.map.width = map.width || state.map.width;
+    state.map.height = map.height || state.map.height;
+    state.map.obstacles = map.obstacles || state.map.obstacles;
+}
+
+function updateReadyButton(players) {
+    const me = players.find((p) => p.id === state.playerId);
+    if (!me) return;
+    state.ready = Boolean(me.ready);
+    readyBtn.textContent = me.ready ? 'Ready: Yes' : 'Ready Up';
+    readyBtn.disabled = players.length < 2;
+}
+
+function connectAndJoin(roomName) {
+    const playerName = nameInput.value.trim() || 'Pilot';
+    const weapon = weaponSelect.value;
+    const roomCode = roomName.trim().toUpperCase();
+    roomInput.value = roomCode;
+    socket.emit('joinRoom', { roomName: roomCode, playerName, weapon });
+}
+
+createRoomBtn.addEventListener('click', () => {
+    socket.emit('createRoom', {
+        playerName: nameInput.value.trim() || 'Pilot',
+        weapon: weaponSelect.value
     });
 });
 
-// When we or opponent gets hit
-socket.on('playerHit', (data) => {
-    if (data.targetId === gameState.playerId) {
-        // We got hit
-        gameState.myPlayer.health = data.health;
-        console.log('You got hit! Health:', data.health);
-    } else if (gameState.opponent && data.targetId === gameState.opponent.id) {
-        // Opponent got hit
-        gameState.opponent.health = data.health;
-        console.log('Hit opponent! Health:', data.health);
+joinBtn.addEventListener('click', () => {
+    const roomCode = roomInput.value.trim();
+    if (!roomCode) {
+        setStatus('Enter a room code first.', 'error');
+        return;
     }
-
-    // Update UI
-    document.getElementById('yourHealth').textContent = gameState.myPlayer.health;
-    document.getElementById('opponentHealth').textContent = gameState.opponent.health;
+    connectAndJoin(roomCode);
 });
 
-// When game is over
-socket.on('gameOver', (data) => {
-    gameState.gameStarted = false;
-    const gameOverTitle = document.getElementById('gameOverTitle');
-    const gameOverMessage = document.getElementById('gameOverMessage');
-
-    if (data.winnerId === gameState.playerId) {
-        gameOverTitle.textContent = 'YOU WON!';
-        gameOverTitle.style.color = '#00ff00';
-        gameOverMessage.textContent = 'Congratulations, you eliminated your opponent!';
-    } else {
-        gameOverTitle.textContent = 'GAME OVER';
-        gameOverTitle.style.color = '#ff6b6b';
-        gameOverMessage.textContent = 'You were eliminated. Better luck next time!';
-    }
-
-    // Show game over screen
-    gameScreen.classList.remove('active');
-    gameOverScreen.classList.add('active');
+readyBtn.addEventListener('click', () => {
+    state.ready = !state.ready;
+    socket.emit('setReady', { ready: state.ready });
 });
 
-// When opponent disconnects
-socket.on('opponentDisconnected', () => {
-    alert('Opponent disconnected! Game over.');
+rematchBtn.addEventListener('click', () => {
+    socket.emit('rematchVote');
+    rematchBtn.disabled = true;
+    rematchBtn.textContent = 'Vote Sent';
+});
+
+playAgainBtn.addEventListener('click', () => {
     location.reload();
 });
 
-// ============================================
-// KEYBOARD INPUT HANDLING
-// ============================================
-
-const keys = {};
+weaponSelect.addEventListener('change', () => {
+    socket.emit('switchWeapon', { weapon: weaponSelect.value });
+});
 
 window.addEventListener('keydown', (e) => {
     keys[e.key] = true;
-
-    // Spacebar to shoot
     if (e.key === ' ') {
         e.preventDefault();
         shoot();
@@ -198,236 +358,188 @@ window.addEventListener('keyup', (e) => {
     keys[e.key] = false;
 });
 
-// ============================================
-// GAME FUNCTIONS
-// ============================================
+canvas.addEventListener('mousemove', (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const mx = ((e.clientX - rect.left) / rect.width) * canvas.width;
+    const my = ((e.clientY - rect.top) / rect.height) * canvas.height;
+    const me = getMe();
+    if (!me) return;
+    state.localAim = Math.atan2(my - me.y, mx - me.x);
+});
 
-function shoot() {
-    if (!gameState.gameStarted || !gameState.myPlayer) return;
+function handleJoystickMove(clientX, clientY) {
+    const dx = clientX - state.joystickCenter.x;
+    const dy = clientY - state.joystickCenter.y;
+    const radius = 40;
+    const distance = Math.min(radius, Math.sqrt(dx * dx + dy * dy));
+    const angle = Math.atan2(dy, dx);
 
-    const bullet = {
-        x: gameState.myPlayer.x + Math.cos(gameState.myPlayer.angle) * 20,
-        y: gameState.myPlayer.y + Math.sin(gameState.myPlayer.angle) * 20,
-        velocityX: Math.cos(gameState.myPlayer.angle) * 7,
-        velocityY: Math.sin(gameState.myPlayer.angle) * 7,
-        radius: 5,
-        shooterId: gameState.playerId
+    const x = Math.cos(angle) * distance;
+    const y = Math.sin(angle) * distance;
+
+    joystickStick.style.transform = `translate(${x}px, ${y}px)`;
+    state.touchVector.x = x / radius;
+    state.touchVector.y = y / radius;
+}
+
+joystickBase.addEventListener('pointerdown', (e) => {
+    state.joystickActive = true;
+    const rect = joystickBase.getBoundingClientRect();
+    state.joystickCenter = {
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2
     };
+    handleJoystickMove(e.clientX, e.clientY);
+});
 
-    gameState.myBullets.push(bullet);
+window.addEventListener('pointermove', (e) => {
+    if (!state.joystickActive) return;
+    handleJoystickMove(e.clientX, e.clientY);
+});
 
-    // Tell server we shot
-    socket.emit('shoot', bullet);
-}
+window.addEventListener('pointerup', () => {
+    state.joystickActive = false;
+    joystickStick.style.transform = 'translate(0, 0)';
+    state.touchVector.x = 0;
+    state.touchVector.y = 0;
+});
 
-function updatePlayer() {
-    if (!gameState.myPlayer) return;
+fireBtn.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    shoot();
+});
 
-    // Reset velocity each frame
-    gameState.myPlayer.velocityX = 0;
-    gameState.myPlayer.velocityY = 0;
+socket.on('connect', () => {
+    state.connected = true;
+    state.playerId = socket.id;
+    setStatus('Connected. Create a room or join one.', 'ok');
+});
 
-    // Handle arrow key movement
-    if (keys['ArrowUp']) gameState.myPlayer.velocityY -= gameState.myPlayer.speed;
-    if (keys['ArrowDown']) gameState.myPlayer.velocityY += gameState.myPlayer.speed;
-    if (keys['ArrowLeft']) gameState.myPlayer.velocityX -= gameState.myPlayer.speed;
-    if (keys['ArrowRight']) gameState.myPlayer.velocityX += gameState.myPlayer.speed;
+socket.on('status', ({ message, kind }) => setStatus(message, kind));
 
-    // Update position
-    gameState.myPlayer.x += gameState.myPlayer.velocityX;
-    gameState.myPlayer.y += gameState.myPlayer.velocityY;
+socket.on('roomCreated', ({ roomCode }) => {
+    roomInput.value = roomCode;
+    showOverlay(`Room ${roomCode} created`);
+    setStatus(`Room ${roomCode} created. Click Join Room.`, 'ok');
+});
 
-    // Keep player on screen
-    gameState.myPlayer.x = Math.max(gameState.myPlayer.radius, Math.min(canvas.width - gameState.myPlayer.radius, gameState.myPlayer.x));
-    gameState.myPlayer.y = Math.max(gameState.myPlayer.radius, Math.min(canvas.height - gameState.myPlayer.radius, gameState.myPlayer.y));
+socket.on('preFill', ({ roomCode, playerName, weapon }) => {
+    roomInput.value = roomCode;
+    if (playerName) nameInput.value = playerName;
+    if (weapon) weaponSelect.value = weapon;
+});
 
-    // Calculate angle to face mouse (or movement direction)
-    if (gameState.myPlayer.velocityX !== 0 || gameState.myPlayer.velocityY !== 0) {
-        gameState.myPlayer.angle = Math.atan2(gameState.myPlayer.velocityY, gameState.myPlayer.velocityX);
+socket.on('joinedRoom', (payload) => {
+    state.roomName = payload.roomName;
+    state.roomCode = payload.roomName;
+    state.roundsToWin = payload.roundsToWin || 3;
+    applyMap(payload.map);
+    readyBtn.disabled = false;
+    setStatus(`Joined ${state.roomCode}. Waiting for ready players...`, 'ok');
+});
+
+socket.on('roomState', (payload) => {
+    state.roomName = payload.roomName;
+    state.roomCode = payload.roomCode;
+    state.roundNumber = payload.roundNumber || 0;
+    applyMap(payload.map);
+    syncPlayers(payload.players || []);
+    updateReadyButton(payload.players || []);
+
+    const me = getMe();
+    if (me) {
+        weaponSelect.value = me.weapon || weaponSelect.value;
     }
+});
 
-    // Send updated position to server
-    socket.emit('playerMove', {
-        x: gameState.myPlayer.x,
-        y: gameState.myPlayer.y,
-        angle: gameState.myPlayer.angle
-    });
-}
+socket.on('roundCountdown', ({ seconds, roundNumber }) => {
+    state.roundNumber = roundNumber;
+    state.matchEnded = false;
+    joinScreen.classList.remove('active');
+    gameOverScreen.classList.remove('active');
+    gameScreen.classList.add('active');
+    showOverlay(`Round ${roundNumber} starts in ${seconds}...`, 2900);
+    playTone(520, 0.08, 0.04);
+});
 
-function updateBullets() {
-    // Update my bullets
-    gameState.myBullets = gameState.myBullets.filter(bullet => {
-        bullet.x += bullet.velocityX;
-        bullet.y += bullet.velocityY;
+socket.on('roundStart', ({ roundNumber, players, map }) => {
+    state.gameStarted = true;
+    state.roundNumber = roundNumber;
+    applyMap(map);
+    syncPlayers(players || []);
+    showOverlay(`Round ${roundNumber} live`, 1000);
+});
 
-        // Remove if off screen
-        return bullet.x > 0 && bullet.x < canvas.width && bullet.y > 0 && bullet.y < canvas.height;
-    });
+socket.on('stateUpdate', ({ players, bullets }) => {
+    syncPlayers(players || []);
+    state.bullets = bullets || [];
+});
 
-    // Update opponent bullets
-    gameState.opponentBullets = gameState.opponentBullets.filter(bullet => {
-        bullet.x += bullet.velocityX;
-        bullet.y += bullet.velocityY;
+socket.on('bulletFired', () => {
+    playTone(380, 0.03, 0.02);
+});
 
-        // Remove if off screen
-        return bullet.x > 0 && bullet.x < canvas.width && bullet.y > 0 && bullet.y < canvas.height;
-    });
-}
+socket.on('playerHit', ({ targetId, health, hitX, hitY }) => {
+    const target = state.players.find((p) => p.id === targetId);
+    if (target) target.health = health;
+    if (typeof hitX === 'number' && typeof hitY === 'number') {
+        spawnHitParticles(hitX, hitY);
+    }
+    playTone(140, 0.06, 0.05);
+    updateHud();
+});
 
-function checkCollisions() {
-    if (!gameState.myPlayer || !gameState.opponent) return;
+socket.on('roundEnd', ({ winnerId, scores }) => {
+    state.gameStarted = false;
+    syncPlayers(scores || state.players);
+    showOverlay(winnerId === state.playerId ? 'Round won' : 'Round lost', 1300);
+});
 
-    // Check if opponent bullets hit us
-    gameState.opponentBullets.forEach((bullet, index) => {
-        const dist = Math.sqrt(
-            Math.pow(bullet.x - gameState.myPlayer.x, 2) +
-            Math.pow(bullet.y - gameState.myPlayer.y, 2)
-        );
+socket.on('gameOver', ({ winnerId, scores }) => {
+    state.gameStarted = false;
+    state.matchEnded = true;
+    syncPlayers(scores || state.players);
 
-        if (dist < bullet.radius + gameState.myPlayer.radius) {
-            // We got hit!
-            gameState.opponentBullets.splice(index, 1);
-            socket.emit('hit', { targetId: gameState.playerId });
+    const gameOverTitle = document.getElementById('gameOverTitle');
+    const gameOverMessage = document.getElementById('gameOverMessage');
+    gameOverTitle.textContent = winnerId === state.playerId ? 'MATCH WON' : 'MATCH LOST';
+    gameOverMessage.textContent = `First to ${state.roundsToWin} rounds wins. Vote rematch to play again.`;
+
+    rematchBtn.disabled = false;
+    rematchBtn.textContent = 'Vote Rematch';
+    gameOverScreen.classList.add('active');
+});
+
+socket.on('rematchState', ({ votes, needed }) => {
+    gameOverMessage.textContent = `Rematch votes: ${votes}/${needed}`;
+});
+
+socket.on('opponentDisconnected', () => {
+    showOverlay('Opponent disconnected');
+    setStatus('Opponent disconnected. You can wait for another player.', 'error');
+    state.gameStarted = false;
+});
+
+fetch('/api/leaderboard')
+    .then((res) => res.json())
+    .then((data) => {
+        leaderboardList.innerHTML = '';
+        const items = data.leaderboard || [];
+        if (items.length === 0) {
+            const li = document.createElement('li');
+            li.textContent = 'No matches yet';
+            leaderboardList.appendChild(li);
+            return;
         }
+
+        items.forEach((row) => {
+            const li = document.createElement('li');
+            li.textContent = `${row.name} - ${row.wins}W/${row.losses}L, ${row.hits} hits`;
+            leaderboardList.appendChild(li);
+        });
+    })
+    .catch(() => {
+        leaderboardList.innerHTML = '<li>Leaderboard unavailable</li>';
     });
 
-    // Check if our bullets hit opponent
-    gameState.myBullets.forEach((bullet, index) => {
-        const dist = Math.sqrt(
-            Math.pow(bullet.x - gameState.opponent.x, 2) +
-            Math.pow(bullet.y - gameState.opponent.y, 2)
-        );
-
-        if (dist < bullet.radius + gameState.opponent.radius) {
-            // We hit opponent!
-            gameState.myBullets.splice(index, 1);
-            socket.emit('hit', { targetId: gameState.opponent.id });
-        }
-    });
-}
-
-// ============================================
-// RENDERING (Drawing)
-// ============================================
-
-function drawPlayer(player, isMe = false) {
-    if (!player) return;
-
-    ctx.save();
-    ctx.translate(player.x, player.y);
-    ctx.rotate(player.angle);
-
-    // Draw ship body (triangle)
-    ctx.fillStyle = isMe ? '#00ff00' : '#ff6b6b';
-    ctx.beginPath();
-    ctx.moveTo(15, 0);
-    ctx.lineTo(-10, -10);
-    ctx.lineTo(-5, 0);
-    ctx.lineTo(-10, 10);
-    ctx.closePath();
-    ctx.fill();
-
-    // Draw cockpit
-    ctx.fillStyle = '#ffff00';
-    ctx.beginPath();
-    ctx.arc(5, 0, 3, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.restore();
-
-    // Draw health bar above player
-    const healthBarWidth = 40;
-    const healthBarHeight = 5;
-    const healthPercent = player.health / 5;
-
-    ctx.fillStyle = '#333';
-    ctx.fillRect(player.x - healthBarWidth / 2, player.y - 30, healthBarWidth, healthBarHeight);
-
-    ctx.fillStyle = healthPercent > 0.4 ? '#00ff00' : '#ff6b6b';
-    ctx.fillRect(player.x - healthBarWidth / 2, player.y - 30, healthBarWidth * healthPercent, healthBarHeight);
-
-    ctx.strokeStyle = '#00ff00';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(player.x - healthBarWidth / 2, player.y - 30, healthBarWidth, healthBarHeight);
-}
-
-function drawBullets() {
-    // Draw my bullets (green)
-    ctx.fillStyle = '#00ff00';
-    gameState.myBullets.forEach(bullet => {
-        ctx.beginPath();
-        ctx.arc(bullet.x, bullet.y, bullet.radius, 0, Math.PI * 2);
-        ctx.fill();
-    });
-
-    // Draw opponent bullets (red)
-    ctx.fillStyle = '#ff6b6b';
-    gameState.opponentBullets.forEach(bullet => {
-        ctx.beginPath();
-        ctx.arc(bullet.x, bullet.y, bullet.radius, 0, Math.PI * 2);
-        ctx.fill();
-    });
-}
-
-function drawUI() {
-    ctx.fillStyle = '#00ff00';
-    ctx.font = '14px Arial';
-    ctx.fillText('Arrow Keys to Move | Space to Shoot', 10, 30);
-}
-
-function render() {
-    // Clear canvas (black background)
-    ctx.fillStyle = '#1a1a2e';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Draw grid background
-    ctx.strokeStyle = 'rgba(0, 255, 0, 0.1)';
-    ctx.lineWidth = 1;
-    for (let i = 0; i < canvas.width; i += 50) {
-        ctx.beginPath();
-        ctx.moveTo(i, 0);
-        ctx.lineTo(i, canvas.height);
-        ctx.stroke();
-    }
-    for (let i = 0; i < canvas.height; i += 50) {
-        ctx.beginPath();
-        ctx.moveTo(0, i);
-        ctx.lineTo(canvas.width, i);
-        ctx.stroke();
-    }
-
-    // Draw players
-    drawPlayer(gameState.myPlayer, true);
-    drawPlayer(gameState.opponent, false);
-
-    // Draw bullets
-    drawBullets();
-
-    // Draw UI text
-    drawUI();
-}
-
-// ============================================
-// MAIN GAME LOOP
-// ============================================
-
-function gameLoop() {
-    if (!gameState.gameStarted) return;
-
-    // Update
-    updatePlayer();
-    updateBullets();
-    checkCollisions();
-
-    // Render
-    render();
-
-    // Call this function again next frame (60 FPS)
-    requestAnimationFrame(gameLoop);
-}
-
-// ============================================
-// INITIALIZATION
-// ============================================
-
-console.log('Game loaded and ready!');
+loop();

@@ -7,67 +7,94 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <!-- Main container -->
     <div id="gameContainer">
-        <!-- This shows before the game starts -->
         <div id="joinScreen" class="screen active">
             <h1>Blaster Arena</h1>
-            <p>A Multiplayer 2D Shooter Game</p>
-            
-            <div class="form-group">
-                <label for="roomInput">Enter Game Room Name:</label>
-                <input 
-                    type="text" 
-                    id="roomInput" 
-                    placeholder="e.g., 'room1', 'battle', etc."
-                    value="room1"
-                >
+            <p>Real-time 1v1 arena shooter with rounds and matchmaking.</p>
+
+            <div class="join-grid">
+                <div class="form-group">
+                    <label for="nameInput">Pilot Name</label>
+                    <input type="text" id="nameInput" placeholder="Your name" maxlength="16" value="Pilot">
+                </div>
+                <div class="form-group">
+                    <label for="roomInput">Room Code</label>
+                    <input type="text" id="roomInput" placeholder="ABCDE" maxlength="8">
+                </div>
+                <div class="form-group">
+                    <label for="weaponSelect">Weapon</label>
+                    <select id="weaponSelect">
+                        <option value="blaster">Blaster (balanced)</option>
+                        <option value="rapid">Rapid (fast fire)</option>
+                        <option value="sniper">Sniper (heavy hit)</option>
+                    </select>
+                </div>
             </div>
-            
-            <button id="joinBtn" class="btn">Join Game</button>
-            
+
+            <div class="action-row">
+                <button id="createRoomBtn" class="btn secondary">Create Room</button>
+                <button id="joinBtn" class="btn">Join Room</button>
+                <button id="readyBtn" class="btn" disabled>Ready Up</button>
+            </div>
+
             <div id="status" class="status"></div>
-            
+
             <div class="instructions">
                 <h3>How to Play:</h3>
                 <ul>
-                    <li>Arrow Keys = Move</li>
-                    <li>Space = Shoot</li>
-                    <li>First to take 5 hits loses!</li>
-                    <li>Share the room name with a friend</li>
+                    <li>Move with Arrow Keys or WASD</li>
+                    <li>Shoot with Space</li>
+                    <li>First to win 3 rounds wins the match</li>
+                    <li>Both players must Ready Up to start</li>
                 </ul>
             </div>
-        </div>
 
-        <!-- This shows during the game -->
-        <div id="gameScreen" class="screen">
-            <!-- The canvas is where the game is drawn -->
-            <canvas id="gameCanvas" width="800" height="600"></canvas>
-            
-            <!-- Game info (health, status) -->
-            <div id="gameInfo">
-                <div class="player-info">
-                    <p>Your Health: <span id="yourHealth">5</span></p>
-                </div>
-                <div class="player-info">
-                    <p>Opponent Health: <span id="opponentHealth">5</span></p>
-                </div>
+            <div class="leaderboard">
+                <h3>Top Pilots</h3>
+                <ol id="leaderboardList"></ol>
             </div>
         </div>
 
-        <!-- This shows when the game ends -->
+        <div id="gameScreen" class="screen">
+            <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+            <div id="gameInfo">
+                <div class="player-info">
+                    <p>You: <span id="yourName">-</span></p>
+                    <p>Health: <span id="yourHealth">5</span></p>
+                    <p>Rounds: <span id="yourRounds">0</span></p>
+                </div>
+                <div class="player-info">
+                    <p>Opponent: <span id="opponentName">-</span></p>
+                    <p>Health: <span id="opponentHealth">5</span></p>
+                    <p>Rounds: <span id="opponentRounds">0</span></p>
+                </div>
+                <div class="player-info">
+                    <p>Room: <span id="roomLabel">-</span></p>
+                    <p>Round: <span id="roundLabel">0</span></p>
+                    <p>Weapon: <span id="weaponLabel">-</span></p>
+                </div>
+            </div>
+
+            <div id="overlayMessage"></div>
+
+            <div id="mobileControls">
+                <div id="joystickBase"><div id="joystickStick"></div></div>
+                <button id="fireBtn">FIRE</button>
+            </div>
+        </div>
+
         <div id="gameOverScreen" class="screen">
             <div class="game-over-content">
                 <h1 id="gameOverTitle">YOU WON!</h1>
                 <p id="gameOverMessage">Congratulations!</p>
-                <button id="playAgainBtn" class="btn">Play Again</button>
+                <button id="rematchBtn" class="btn">Vote Rematch</button>
+                <button id="playAgainBtn" class="btn secondary">Back To Lobby</button>
             </div>
         </div>
     </div>
 
-    <!-- Load Socket.IO library (handles real-time communication) -->
     <script src="/socket.io/socket.io.js"></script>
-    <!-- Load our game code -->
     <script src="game.js"></script>
 </body>
 </html>
