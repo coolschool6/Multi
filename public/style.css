@@ -220,6 +220,7 @@ select {
 #joystickBase,
 #fireBtn {
     pointer-events: all;
+    touch-action: none;
 }
 
 #joystickBase {

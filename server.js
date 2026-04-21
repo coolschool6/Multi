@@ -21,6 +21,7 @@ const PLAYER_RADIUS = 15;
 const MAX_PLAYERS_PER_ROOM = 2;
 const ROUND_START_HEALTH = 5;
 const ROUNDS_TO_WIN = 3;
+const SERVER_TICK_MS = Math.floor(1000 / 60);
 
 const WEAPONS = {
   blaster: { speed: 7, cooldownMs: 350, damage: 1 },
@@ -341,7 +342,7 @@ function handleBulletSimulation() {
   });
 }
 
-setInterval(handleBulletSimulation, 33);
+setInterval(handleBulletSimulation, SERVER_TICK_MS);
 
 io.on('connection', (socket) => {
   socket.on('createRoom', ({ playerName, weapon }) => {

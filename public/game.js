@@ -11,11 +11,13 @@ const state = {
     matchEnded: false,
     players: [],
     bullets: [],
+    bulletRenderCache: {},
     map: { width: 800, height: 600, obstacles: [] },
     touchVector: { x: 0, y: 0 },
     particles: [],
     overlayTimer: 0,
     joystickActive: false,
+    joystickPointerId: null,
     joystickCenter: { x: 0, y: 0 },
     localAim: 0,
     ready: false
@@ -187,7 +189,7 @@ function drawPlayer(player, me = false) {
 }
 
 function drawBullets() {
-    state.bullets.forEach((b) => {
+    Object.values(state.bulletRenderCache).forEach((b) => {
         const mine = b.ownerId === state.playerId;
         ctx.fillStyle = mine ? '#5de0ff' : '#ff8da0';
         ctx.beginPath();
@@ -219,6 +221,32 @@ function drawArena() {
     drawPlayer(getOpponent(), false);
     drawPlayer(getMe(), true);
     drawParticles();
+}
+
+function updateBulletInterpolation() {
+    const activeIds = new Set();
+
+    state.bullets.forEach((target) => {
+        activeIds.add(target.id);
+        const cached = state.bulletRenderCache[target.id];
+        if (!cached) {
+            state.bulletRenderCache[target.id] = {
+                ...target
+            };
+            return;
+        }
+
+        cached.x += (target.x - cached.x) * 0.5;
+        cached.y += (target.y - cached.y) * 0.5;
+        cached.radius = target.radius;
+        cached.ownerId = target.ownerId;
+    });
+
+    Object.keys(state.bulletRenderCache).forEach((id) => {
+        if (!activeIds.has(id)) {
+            delete state.bulletRenderCache[id];
+        }
+    });
 }
 
 function isBlocked(x, y, radius) {
@@ -267,6 +295,11 @@ function sendMovement() {
         state.localAim = Math.atan2(move.dy, move.dx);
     }
 
+    // Client-side prediction keeps controls responsive while waiting for server updates.
+    me.x = x;
+    me.y = y;
+    me.angle = state.localAim || me.angle || 0;
+
     socket.emit('playerMove', { x, y, angle: state.localAim || me.angle || 0 });
 }
 
@@ -280,6 +313,7 @@ function shoot() {
 
 function loop() {
     sendMovement();
+    updateBulletInterpolation();
     updateParticles();
     drawArena();
     hideOverlayIfExpired();
@@ -287,7 +321,21 @@ function loop() {
 }
 
 function syncPlayers(players) {
-    state.players = players || [];
+    const incoming = players || [];
+    state.players = incoming.map((nextPlayer) => {
+        const prev = state.players.find((p) => p.id === nextPlayer.id);
+        if (!prev) return nextPlayer;
+
+        const isMe = nextPlayer.id === state.playerId;
+        const blend = isMe ? 0.55 : 0.28;
+
+        return {
+            ...nextPlayer,
+            x: prev.x + (nextPlayer.x - prev.x) * blend,
+            y: prev.y + (nextPlayer.y - prev.y) * blend,
+            angle: prev.angle + (nextPlayer.angle - prev.angle) * 0.35
+        };
+    });
     updateHud();
 }
 
@@ -388,6 +436,8 @@ function handleJoystickMove(clientX, clientY) {
 
 joystickBase.addEventListener('pointerdown', (e) => {
     state.joystickActive = true;
+    state.joystickPointerId = e.pointerId;
+    joystickBase.setPointerCapture(e.pointerId);
     const rect = joystickBase.getBoundingClientRect();
     state.joystickCenter = {
         x: rect.left + rect.width / 2,
@@ -398,14 +448,26 @@ joystickBase.addEventListener('pointerdown', (e) => {
 
 window.addEventListener('pointermove', (e) => {
     if (!state.joystickActive) return;
+    if (e.pointerId !== state.joystickPointerId) return;
     handleJoystickMove(e.clientX, e.clientY);
 });
 
-window.addEventListener('pointerup', () => {
+function releaseJoystick(pointerId) {
+    if (!state.joystickActive) return;
+    if (pointerId !== state.joystickPointerId) return;
     state.joystickActive = false;
+    state.joystickPointerId = null;
     joystickStick.style.transform = 'translate(0, 0)';
     state.touchVector.x = 0;
     state.touchVector.y = 0;
+}
+
+window.addEventListener('pointerup', (e) => {
+    releaseJoystick(e.pointerId);
+});
+
+window.addEventListener('pointercancel', (e) => {
+    releaseJoystick(e.pointerId);
 });
 
 fireBtn.addEventListener('pointerdown', (e) => {
