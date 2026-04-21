@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blaster Arena - 2D Shooter Game</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- Main container -->
+    <div id="gameContainer">
+        <!-- This shows before the game starts -->
+        <div id="joinScreen" class="screen active">
+            <h1>Blaster Arena</h1>
+            <p>A Multiplayer 2D Shooter Game</p>
+            
+            <div class="form-group">
+                <label for="roomInput">Enter Game Room Name:</label>
+                <input 
+                    type="text" 
+                    id="roomInput" 
+                    placeholder="e.g., 'room1', 'battle', etc."
+                    value="room1"
+                >
+            </div>
+            
+            <button id="joinBtn" class="btn">Join Game</button>
+            
+            <div id="status" class="status"></div>
+            
+            <div class="instructions">
+                <h3>How to Play:</h3>
+                <ul>
+                    <li>Arrow Keys = Move</li>
+                    <li>Space = Shoot</li>
+                    <li>First to take 5 hits loses!</li>
+                    <li>Share the room name with a friend</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- This shows during the game -->
+        <div id="gameScreen" class="screen">
+            <!-- The canvas is where the game is drawn -->
+            <canvas id="gameCanvas" width="800" height="600"></canvas>
+            
+            <!-- Game info (health, status) -->
+            <div id="gameInfo">
+                <div class="player-info">
+                    <p>Your Health: <span id="yourHealth">5</span></p>
+                </div>
+                <div class="player-info">
+                    <p>Opponent Health: <span id="opponentHealth">5</span></p>
+                </div>
+            </div>
+        </div>
+
+        <!-- This shows when the game ends -->
+        <div id="gameOverScreen" class="screen">
+            <div class="game-over-content">
+                <h1 id="gameOverTitle">YOU WON!</h1>
+                <p id="gameOverMessage">Congratulations!</p>
+                <button id="playAgainBtn" class="btn">Play Again</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Load Socket.IO library (handles real-time communication) -->
+    <script src="/socket.io/socket.io.js"></script>
+    <!-- Load our game code -->
+    <script src="game.js"></script>
+</body>
+</html>
