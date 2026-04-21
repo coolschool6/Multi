@@ -48,6 +48,8 @@ const opponentRounds = document.getElementById('opponentRounds');
 const roomLabel = document.getElementById('roomLabel');
 const roundLabel = document.getElementById('roundLabel');
 const weaponLabel = document.getElementById('weaponLabel');
+const gameOverTitle = document.getElementById('gameOverTitle');
+const gameOverMessage = document.getElementById('gameOverMessage');
 
 const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
@@ -312,6 +314,7 @@ function connectAndJoin(roomName) {
 }
 
 createRoomBtn.addEventListener('click', () => {
+    setStatus('Creating room...', 'info');
     socket.emit('createRoom', {
         playerName: nameInput.value.trim() || 'Pilot',
         weapon: weaponSelect.value
@@ -420,7 +423,8 @@ socket.on('status', ({ message, kind }) => setStatus(message, kind));
 socket.on('roomCreated', ({ roomCode }) => {
     roomInput.value = roomCode;
     showOverlay(`Room ${roomCode} created`);
-    setStatus(`Room ${roomCode} created. Click Join Room.`, 'ok');
+    setStatus(`Room ${roomCode} created. Joining now...`, 'ok');
+    connectAndJoin(roomCode);
 });
 
 socket.on('preFill', ({ roomCode, playerName, weapon }) => {
@@ -500,8 +504,6 @@ socket.on('gameOver', ({ winnerId, scores }) => {
     state.matchEnded = true;
     syncPlayers(scores || state.players);
 
-    const gameOverTitle = document.getElementById('gameOverTitle');
-    const gameOverMessage = document.getElementById('gameOverMessage');
     gameOverTitle.textContent = winnerId === state.playerId ? 'MATCH WON' : 'MATCH LOST';
     gameOverMessage.textContent = `First to ${state.roundsToWin} rounds wins. Vote rematch to play again.`;
 
