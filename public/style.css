@@ -17,10 +17,16 @@
     box-sizing: border-box;
 }
 
+html,
+body {
+    overscroll-behavior: none;
+}
+
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     min-height: 100vh;
     color: var(--text);
+    touch-action: manipulation;
     background:
         radial-gradient(circle at 10% 15%, rgba(73, 246, 183, 0.16), transparent 40%),
         radial-gradient(circle at 90% 85%, rgba(42, 197, 255, 0.2), transparent 42%),
@@ -164,6 +170,7 @@ select {
     border: 2px solid rgba(73, 246, 183, 0.8);
     border-radius: 8px;
     background: #050711;
+    touch-action: none;
 }
 
 #gameInfo {
@@ -200,11 +207,14 @@ select {
 
 #mobileControls {
     display: none;
-    position: absolute;
-    inset: auto 12px 18px 12px;
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: calc(14px + env(safe-area-inset-bottom));
     justify-content: space-between;
     align-items: flex-end;
     pointer-events: none;
+    z-index: 20;
 }
 
 #joystickBase,
@@ -265,11 +275,44 @@ select {
         grid-template-columns: 1fr;
     }
 
+    input,
+    select,
+    .btn {
+        font-size: 16px;
+    }
+
     #gameInfo {
         grid-template-columns: 1fr;
     }
 
+    #gameScreen {
+        justify-content: flex-start;
+        padding-bottom: 190px;
+    }
+
+    #gameCanvas {
+        max-height: 58vh;
+    }
+
     #mobileControls {
         display: flex;
+    }
+
+    #joystickBase {
+        width: 140px;
+        height: 140px;
+        border-radius: 70px;
+    }
+
+    #joystickStick {
+        width: 64px;
+        height: 64px;
+        left: 38px;
+        top: 38px;
+    }
+
+    #fireBtn {
+        width: 112px;
+        height: 112px;
     }
 }

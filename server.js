@@ -166,8 +166,21 @@ function emitRoomState(room) {
   });
 }
 
-function playerSpawnPosition(side) {
-  return side === 0 ? { x: 110, y: 300 } : { x: 690, y: 300 };
+function playerSpawnPosition(side, obstacles) {
+  const candidates = side === 0
+    ? [
+      { x: 110, y: 260 },
+      { x: 110, y: 360 },
+      { x: 160, y: 260 }
+    ]
+    : [
+      { x: 690, y: 260 },
+      { x: 690, y: 360 },
+      { x: 640, y: 260 }
+    ];
+
+  const safe = candidates.find((point) => !obstacles.some((rect) => circleIntersectsRect(point.x, point.y, PLAYER_RADIUS, rect)));
+  return safe || candidates[0];
 }
 
 function circleIntersectsRect(x, y, r, rect) {
@@ -197,7 +210,7 @@ function startRound(room) {
 
   const players = Object.values(room.players);
   players.forEach((player, idx) => {
-    const spawn = playerSpawnPosition(idx);
+    const spawn = playerSpawnPosition(idx, room.obstacles);
     player.x = spawn.x;
     player.y = spawn.y;
     player.health = ROUND_START_HEALTH;
@@ -360,7 +373,7 @@ io.on('connection', (socket) => {
       return;
     }
 
-    const spawn = playerSpawnPosition(existingPlayers.length);
+    const spawn = playerSpawnPosition(existingPlayers.length, room.obstacles);
     room.players[socket.id] = {
       id: socket.id,
       name: cleanName,

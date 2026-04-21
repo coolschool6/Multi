@@ -23,6 +23,7 @@ const state = {
 
 const keys = {};
 let audioContext;
+let fireHoldTimer = null;
 
 const joinScreen = document.getElementById('joinScreen');
 const gameScreen = document.getElementById('gameScreen');
@@ -410,6 +411,34 @@ window.addEventListener('pointerup', () => {
 fireBtn.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     shoot();
+    if (fireHoldTimer) clearInterval(fireHoldTimer);
+    fireHoldTimer = setInterval(shoot, 180);
+});
+
+fireBtn.addEventListener('pointerup', () => {
+    if (fireHoldTimer) {
+        clearInterval(fireHoldTimer);
+        fireHoldTimer = null;
+    }
+});
+
+fireBtn.addEventListener('pointercancel', () => {
+    if (fireHoldTimer) {
+        clearInterval(fireHoldTimer);
+        fireHoldTimer = null;
+    }
+});
+
+document.addEventListener('touchmove', (e) => {
+    if (!gameScreen.classList.contains('active')) return;
+    e.preventDefault();
+}, { passive: false });
+
+document.addEventListener('touchend', () => {
+    if (fireHoldTimer) {
+        clearInterval(fireHoldTimer);
+        fireHoldTimer = null;
+    }
 });
 
 socket.on('connect', () => {
